@@ -1,0 +1,441 @@
+---
+title: "1_import"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+# Import library
+
+```{r}
+rm (list = ls())
+
+# Helper
+library (tidyverse)
+
+# Import
+library (rio)
+
+# Exploration 
+library (DataExplorer)
+library (janitor)
+library (arsenal)
+
+# Statistics
+library (gamlss)
+library (gamlss.add)
+library(gamlss.dist)
+library (mgcv)
+library (gratia)
+library (viridis)
+```
+
+# Import data
+
+```{r}
+input_dir <- "../../mocap_database/data_senden/data"
+
+
+list_of_files <- list.files(input_dir, pattern = ".xlsx")
+
+demo <- rio::import (file.path(input_dir, list_of_files[[1]]))
+df_list <- rio::import_list(file.path(input_dir, list_of_files[[2]]))
+names(df_list)
+```
+
+## Restruture data
+
+```{r}
+
+df_speed <- df_list$gait_comf
+df_rhip_pow <- df_list$`Power RHipFlex_comf`
+df_lhip_pow <- df_list$`Power LHipFlex_comf`
+df_rkne_pow <- df_list$`Power RKneeFlex_comf`
+df_lkne_pow <- df_list$`Power LKneeFlex_comf`
+df_rank_pow <- df_list$`Power RAnkleFlex_comf`
+df_lank_pow <- df_list$`Power LAnkleFlex_comf`
+
+df_rhip_pow <- df_rhip_pow[,-1] %>%
+  pivot_longer(cols = -`Gait Cycle`,
+               names_to = "cycle",
+               values_to = "power")%>%
+  rename (subj = `Gait Cycle`) %>%
+  mutate (side = "r",
+          joint = "hip",
+          cycle = as.numeric (cycle))
+
+df_lhip_pow <- df_lhip_pow[,-1] %>%
+  pivot_longer(cols = -`Gait cycle (%)`,
+               names_to = "cycle",
+               values_to = "power")%>%
+  rename (subj = `Gait cycle (%)`) %>%
+  mutate (side = "l",
+          joint = "hip",
+          cycle = as.numeric (cycle))
+
+df_rkne_pow <- df_rkne_pow[,-1] %>%
+  pivot_longer(cols = -`Gait Cycle`,
+               names_to = "cycle",
+               values_to = "power")%>%
+  rename (subj = `Gait Cycle`) %>%
+  mutate (side = "r",
+          joint = "knee",
+          cycle = as.numeric (cycle))
+
+df_lkne_pow <- df_lkne_pow[,-1] %>%
+  pivot_longer(cols = -`Gait cycle (%)`,
+               names_to = "cycle",
+               values_to = "power")%>%
+  rename (subj = `Gait cycle (%)`) %>%
+  mutate (side = "l",
+          joint = "knee",
+          cycle = as.numeric (cycle))
+
+df_rank_pow <- df_rank_pow[,-1] %>%
+  pivot_longer(cols = -`Gait Cycle`,
+               names_to = "cycle",
+               values_to = "power")%>%
+  rename (subj = `Gait Cycle`) %>%
+  mutate (side = "r",
+          joint = "ankle",
+          cycle = as.numeric (cycle))
+
+df_lank_pow <- df_lank_pow[,-1] %>%
+  pivot_longer(cols = -`Gait cycle (%)`,
+               names_to = "cycle",
+               values_to = "power")%>%
+  rename (subj = `Gait cycle (%)`) %>%
+  mutate (side = "l",
+          joint = "ankle",
+          cycle = as.numeric (cycle))
+
+df_pow <- bind_rows(df_rhip_pow,
+                    df_lhip_pow,
+                    df_rkne_pow,
+                    df_lkne_pow,
+                    df_rank_pow,
+                    df_lank_pow)
+
+names(df_speed)[1] <- "subj"
+df_speed <- janitor::clean_names(df_speed)
+
+df_speed <- df_speed %>%
+  select (matches("subj|speed|stride_length")) %>%
+  select (-matches ("std")) %>%
+  pivot_longer(cols = matches("stride"),
+               names_to = "side",
+               values_to = "strlen") %>%
+  mutate(side = ifelse(str_detect(side, "r_"), "r", "l")) %>%
+  rename(speed = walking_speed_m_s_mean)
+
+df_pow <- df_speed %>%
+  inner_join(df_pow, by = c("subj", "side"))
+
+demo2 <- demo[,c(1: 5)] %>%
+  mutate (Subject = str_pad(Subject, width = 2, side = "left", pad = "0")) %>%
+  mutate(Subject = paste0("HCC0", Subject))
+
+names(demo2) <- c("subj", "age", "sex", "mass", "ht")
+
+df_pow2 <- demo2 %>%
+  inner_join(df_pow, by = c("subj"))
+```
+
+
+## Export data
+ 
+```{r}
+
+saveRDS(df_pow2, "output/clean_dat.RDS")
+
+```
+
+## Reimport
+
+```{r}
+df_pow <- readRDS("output/clean_dat.RDS")
+```
+
+
+# Plot
+
+```{r}
+df_plot <- df_pow %>%
+  mutate (subj = factor (subj)) %>%
+  mutate (joint = factor (joint, levels = c("ankle", "knee", "hip"))) %>%
+  mutate (age2 = factor (age),
+          age2 = fct_collapse(age2,
+                              "3-6yrs" = c("3", "4", "5", "6"),
+                              "7-8yrs" = c("7", "8"),
+                              "9-10yrs" = c("9", "10"),
+                              "11-12yrs" = c("11", "12"),
+                              ">13yrs" = c("13", "14", "15", "17"))) %>%
+  group_by(age2, joint, cycle) %>%
+  summarise (power = mean (power))
+
+f0 <- df_plot %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = power, color = age2), linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  facet_wrap(~joint, scales = "free") +
+  ylab ("Joint power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (color = "Age (yr)") +
+  cowplot::theme_cowplot()
+```
+
+# Hip analysis
+
+# Model
+
+```{r}
+df_hip <- df_pow %>%
+  filter (joint == "hip") %>%
+  mutate (subj = factor (subj)) %>%
+  mutate (sex = factor (sex))
+
+n_distinct(df_hip$age)
+n_distinct(df_hip$speed)
+n_distinct(df_hip$strlen)
+n_distinct(df_hip$ht)
+
+f <- power ~ ba(~ ti (cycle, k = 25, bs = 'cr') + 
+                  ti (age, k = 5, bs = 'cr') + 
+                  ti (speed, k = 15, bs = 'cr') + 
+                  ti(ht, k = 10, bs = 'cr') + 
+                  ti(strlen, k = 15, bs = 'cr') + 
+                  sex + 
+                  side + 
+                  ti (cycle, age, k = c(15,10), bs = 'cr')+ 
+                  ti (cycle, speed, k = c(20,5),  bs = 'cr')+ 
+                  ti (cycle, ht, k = c(20,5), bs = 'cr')+ 
+                  ti (cycle, strlen, k = c(15,15), bs = 'cr') + 
+                  s(subj, bs = 're')
+)
+
+m_hip <- gamlss (f,
+                 sigma.fo = ~ ba(~s (cycle, bs = 'cr')),
+                 family = 	NO(),
+                 data = df_hip)
+
+
+```
+
+## Get smooth
+
+```{r}
+smo <- getSmo(m_hip)
+gratia::draw(smo)
+appraise (smo)
+
+## Prediction plots
+
+ds1 <- data_slice(smo,
+                  cycle = 1:100,
+                  age = seq(3, 17, 2)
+                  
+)
+
+
+fv1 <- fitted_values(smo,
+                     data = ds1, 
+                     scale = "response", 
+                     exclude = c("s(subj)"))
+
+f1 <- fv1 %>%
+  mutate(age = factor (age)) %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = fitted, color = age), linewidth = 0.8) +
+  geom_ribbon(aes(x = cycle, ymin = lower, ymax = upper, fill = age), alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  ylab ("Hip power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (fill = "Age (yr)") +
+  guides(color = "none") + 
+  cowplot::theme_cowplot()
+```
+
+## Peak analysis
+
+```{r}
+# H1
+h1 <-fv1 %>%
+  filter (cycle > 5 & cycle < 40) %>%
+  group_by(age) %>%
+  slice_max (fitted)
+
+h1_plot <- ggplot (h1) +
+  geom_point(aes (x = age, y = fitted)) +
+  geom_line (aes (x = age, y = fitted)) + 
+  geom_errorbar(aes (x = age, ymin = lower, ymax = upper), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "H1 (W/kg)") +
+  scale_x_continuous(breaks=seq(3,17, 2)) + 
+  cowplot::theme_cowplot()
+
+# H3
+h3 <- fv1 %>%
+  filter (cycle > 55 & cycle < 80) %>%
+  group_by(age) %>%
+  slice_max (fitted)
+
+h3_plot <- ggplot (h3) +
+  geom_point(aes (x = age, y = fitted)) +
+  geom_line (aes (x = age, y = fitted)) + 
+  geom_errorbar(aes (x = age, ymin = lower, ymax = upper), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "H3 (W/kg)") +
+  scale_x_continuous(breaks=seq(3,17, 2)) + 
+  cowplot::theme_cowplot()
+
+
+```
+
+
+
+# Knee analysis
+
+## Model
+
+```{r}
+df_knee <- df_pow %>%
+  filter (joint == "knee") %>%
+  mutate (subj = factor (subj)) %>%
+  mutate (sex = factor (sex))
+
+hist (df_knee$power)
+
+
+m_knee <- gamlss (f,
+                 sigma.fo = ~ ba(~s (cycle, bs = 'cr') +
+                                   s(age, bs = 'cr')),
+                 family = 	NO(),
+                 data = df_knee)
+
+```
+
+
+## Get smooth
+
+```{r}
+
+smo <- getSmo(m_knee)
+appraise (smo)
+
+## Prediction plots
+
+ds1 <- data_slice(smo,
+                  cycle = 1:100,
+                  age = seq(3, 17, 2)
+                  
+)
+
+
+fv1 <- fitted_values(smo,
+                     data = ds1, 
+                     scale = "response", 
+                     exclude = c("s(subj)"))
+
+
+f2 <- fv1 %>%
+  mutate(age = factor (age)) %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = fitted, color = age), linewidth = 0.8) +
+  geom_ribbon(aes(x = cycle, ymin = lower, ymax = upper, fill = age), alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  ylab ("Knee power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (fill = "Age (yr)") +
+  guides(color = "none") + 
+  cowplot::theme_cowplot()
+```
+
+
+# Ankle analysis
+
+## Model
+
+```{r}
+df_ankle <- df_pow %>%
+  filter (joint == "ankle") %>%
+  filter (cycle >20 & cycle <70) %>%
+  mutate (subj = factor (subj)) %>%
+  mutate (sex = factor (sex))
+
+
+m_ankle <- gamlss (f,
+                 sigma.fo = ~ ba(~s (cycle, bs = 'cr')),
+                 family = 	NO(),
+                 data = df_ankle)
+
+  
+```
+
+
+
+```{r}
+
+smo <- getSmo(m_ankle)
+appraise (smo)
+
+## Prediction plots
+
+ds1 <- data_slice(smo,
+                  cycle = 21:69,
+                  age = seq(3, 17, 2)
+                  
+)
+
+
+fv1 <- fitted_values(smo,
+                     data = ds1, 
+                     scale = "response", 
+                     exclude = c("s(subj)"))
+
+
+f3 <- fv1 %>%
+  mutate(age = factor (age)) %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = fitted, color = age), linewidth = 0.8) +
+  geom_ribbon(aes(x = cycle, ymin = lower, ymax = upper, fill = age), alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  xlim (1,100) + 
+  ylab ("Ankle power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (fill = "Age (yr)") +
+  guides(color = "none") + 
+  cowplot::theme_cowplot()
+```
+
+## Peak analysis
+
+```{r}
+
+a2 <-fv1 %>%
+  group_by(age) %>%
+  slice_max (fitted) 
+
+a2_plot <- ggplot (a2) +
+  geom_point(aes (x = age, y = fitted)) +
+  geom_line (aes (x = age, y = fitted)) + 
+  geom_errorbar(aes (x = age, ymin = lower, ymax = upper), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "A2 (W/kg)") +
+  scale_x_continuous(breaks=seq(3,17, 2)) + 
+  cowplot::theme_cowplot()
+
+
+```
+
+
+```{r}
+cowplot::plot_grid(f3, f2, f1, ncol = 3, labels = "auto")
+```
+
