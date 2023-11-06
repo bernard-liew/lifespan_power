@@ -1,0 +1,208 @@
+---
+title: "1_import"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+# Import library
+
+```{r}
+rm (list = ls())
+
+# Helper
+library (tidyverse)
+
+# Import
+library (rio)
+
+# Exploration 
+library (DataExplorer)
+library (janitor)
+library (arsenal)
+
+```
+
+# Import
+
+```{r}
+df <- readRDS ("output/combined_data.RDS") %>%
+  #filter (study != "lencioni") 
+
+df <- df %>%
+  mutate (age2 = case_when(
+    age %in% c(3:5) ~ "<6yo",
+    age %in% c(6:9) ~ "<6-9yo",
+    age %in% c(10:19) ~ "10+yo",
+    age %in% c(20:29) ~ "20+yo",
+    age %in% c(30:39) ~ "30+yo",
+    age %in% c(40:49) ~ "40+yo",
+    age %in% c(50:59) ~ "50+yo",
+    age %in% c(60:69) ~ "60+yo",
+    age %in% c(70:79) ~ "70+yo",
+    TRUE ~ "80+yo"
+  ))
+```
+
+
+# Plot
+
+```{r}
+unique(df$age)
+
+df %>% 
+  dplyr::select (subj, joint, study) %>%
+  distinct() %>%
+  group_by(joint, study) %>%
+  summarise(n())
+```
+
+
+## Joint power by age category
+
+```{r}
+
+age_levels <- c("<6yo", "<6-9yo","10+yo","20+yo","30+yo", "40+yo",
+                "50+yo","60+yo","70+yo","80+yo")
+df_plot <- df %>%
+  mutate (subj = factor (subj)) %>%
+  mutate (joint = factor (joint, levels = c("ankle", "knee", "hip"))) %>%
+  mutate (age2 = factor (age2, levels = age_levels)) %>%
+  group_by(age2, joint, cycle) %>%
+  summarise (power = mean (pow))
+
+f0 <- df_plot %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = power, color = age2), linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  facet_wrap(~joint, scales = "free") +
+  ylab ("Joint power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (color = "Age (yr)") +
+  cowplot::theme_cowplot()
+
+pdf ("output/average_jtPow.pdf", height = 3, width = 10)
+f0
+dev.off()
+```
+
+
+
+## Joint power by age category split by study
+
+```{r}
+
+df_plot <- df %>%
+  mutate (subj = factor (subj)) %>%
+  mutate (joint = factor (joint, levels = c("ankle", "knee", "hip"))) %>%
+  mutate (age2 = factor (age2, levels = age_levels)) %>%
+  group_by(age2, joint, cycle, study) %>%
+  summarise (power = mean (pow))
+
+f0 <- df_plot %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = power, color = age2), linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  facet_wrap(study~joint, scales = "free", ncol = 3) +
+  ylab ("Joint power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (color = "Age (yr)") +
+  cowplot::theme_cowplot()
+
+pdf ("output/average_jtPow_byStudy.pdf", height = 20, width = 10)
+f0
+dev.off()
+```
+
+## Descriptors
+
+```{r}
+df_plot <- df %>%
+  dplyr::select (subj, age, age2, sex, wt, ht, speed, strlen) %>%
+  mutate (age2 = factor (age2, levels = age_levels)) 
+
+age <- df_plot %>%
+  dplyr::select (subj, age2, age) %>%
+  distinct() %>%
+  group_by(age2) %>%
+  summarise (Mean = mean (age),
+             Sd = sd (age)) %>%
+  ggplot () +
+  geom_point (aes (x = age2, y = Mean)) +
+  geom_errorbar(aes (x = age2, ymin = Mean - Sd, ymax = Mean + Sd), width = 0) +
+  xlab("Age category") +
+  ylab ("Age (years)") +
+  cowplot::theme_cowplot()
+
+ht <- df_plot %>%
+  dplyr::select (subj, age2, ht) %>%
+  distinct() %>%
+  group_by(age2) %>%
+  summarise (Mean = mean (ht),
+             Sd = sd (ht)) %>%
+  ggplot () +
+  geom_point (aes (x = age2, y = Mean)) +
+  geom_errorbar(aes (x = age2, ymin = Mean - Sd, ymax = Mean + Sd), width = 0) +
+  xlab("Age category") +
+  ylab ("Height (m)") +
+  cowplot::theme_cowplot()
+
+wt <- df_plot %>%
+  dplyr::select (subj, age2, wt) %>%
+  distinct() %>%
+  group_by(age2) %>%
+  summarise (Mean = mean (wt),
+             Sd = sd (wt)) %>%
+  ggplot () +
+  geom_point (aes (x = age2, y = Mean)) +
+  geom_errorbar(aes (x = age2, ymin = Mean - Sd, ymax = Mean + Sd), width = 0) +
+  xlab("Age category") +
+  ylab ("Body mass (kg)") +
+  cowplot::theme_cowplot()
+
+speed <- df_plot %>%
+  dplyr::select (subj, age2, speed) %>%
+  distinct() %>%
+  group_by(age2) %>%
+  summarise (Mean = mean (speed),
+             Sd = sd (speed)) %>%
+  ggplot () +
+  geom_point (aes (x = age2, y = Mean)) +
+  geom_errorbar(aes (x = age2, ymin = Mean - Sd, ymax = Mean + Sd), width = 0) +
+  xlab("Age category") +
+  ylab ("Speed (m/s))") +
+  cowplot::theme_cowplot()
+
+strlen <- df_plot %>%
+  dplyr::select (subj, age2, strlen) %>%
+  distinct() %>%
+  group_by(age2) %>%
+  summarise (Mean = mean (strlen),
+             Sd = sd (strlen)) %>%
+  ggplot () +
+  geom_point (aes (x = age2, y = Mean)) +
+  geom_errorbar(aes (x = age2, ymin = Mean - Sd, ymax = Mean + Sd), width = 0) +
+  xlab("Age category") +
+  ylab ("Stride length (m))") +
+  cowplot::theme_cowplot()
+
+sex <- df_plot %>%
+  dplyr::select (subj, age2, sex) %>%
+  distinct() %>%
+  group_by(age2, sex) %>%
+  summarise (Mean = n()) %>%
+  ggplot () +
+  geom_bar (aes (x = age2, y = Mean, fill = sex), stat = "identity",
+            position = "dodge") +
+  xlab("Age category") +
+  ylab ("Number of participants") +
+  cowplot::theme_cowplot()
+
+pdf ("output/descriptors.pdf", height = 10, width = 15)
+cowplot::plot_grid (age, ht, wt, 
+           speed, strlen, sex, ncol = 2)
+dev.off()
+```

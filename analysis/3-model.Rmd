@@ -1,0 +1,517 @@
+---
+title: "1_import"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+# Import library
+
+```{r}
+rm (list = ls())
+
+# Helper
+library (tidyverse)
+
+# Statistics
+library (gamlss)
+library (gamlss.add)
+library(gamlss.dist)
+library (mgcv)
+library (gratia)
+library (viridis)
+library (refund)
+library (cowplot)
+```
+
+# Import
+
+```{r}
+df <- readRDS ("output/combined_data.RDS") 
+  #filter (study != "lencioni") 
+
+df <- df %>%
+  mutate (age2 = case_when(
+    age %in% c(3:5) ~ "<6yo",
+    age %in% c(6:9) ~ "<6-9yo",
+    age %in% c(10:19) ~ "10+yo",
+    age %in% c(20:29) ~ "20+yo",
+    age %in% c(30:39) ~ "30+yo",
+    age %in% c(40:49) ~ "40+yo",
+    age %in% c(50:59) ~ "50+yo",
+    age %in% c(60:69) ~ "60+yo",
+    age %in% c(70:79) ~ "70+yo",
+    TRUE ~ "80+yo"
+  ))
+```
+
+# Keep one data per subject
+
+```{r}
+df2 <- df %>%
+  group_by(subj, study, age, sex, wt, ht, joint, cycle) %>%
+  summarise(pow = mean (pow, na.rm = TRUE),
+            speed = mean (speed, na.rm = TRUE),
+            strlen = mean (strlen, na.rm = TRUE))
+
+df2_wide <- df2 %>%
+  pivot_wider(names_from = cycle,
+              values_from = pow)
+
+ank_wide <- df2_wide %>%
+  filter (joint == "ankle") %>%
+  ungroup() %>%
+  as.data.frame()
+kne_wide <- df2_wide %>%
+  filter (joint == "knee") %>%
+  ungroup() %>%
+  as.data.frame()
+hip_wide <- df2_wide %>%
+  filter (joint == "hip")%>%
+  ungroup() %>%
+  as.data.frame()
+
+ank_df <- as.list (ank_wide[,c(1:9)])
+ank_df$pow <- as.matrix (ank_wide[,c(34:84)])# 25% to 75%
+ank_df$cycle <- 25:75
+
+kne_df <- as.list (kne_wide[,c(1:9)])
+kne_df$pow <- as.matrix (kne_wide[,-c(1:9)])
+kne_df$cycle <- 1:101
+
+hip_df <- as.list (hip_wide[,c(1:9)])
+hip_df$pow <- as.matrix (hip_wide[,-c(1:9)])
+hip_df$cycle <- 1:101
+```
+
+
+# Analysis of ankle power
+
+```{r}
+
+# takes quite long
+mod_ank <- pffr(pow ~
+                #s(subj, bs="re") +
+                s(study, bs = "re")   +
+                s(age) +
+                s(speed) +
+                s(ht) +
+                s(strlen) +
+                c(sex),
+                yind = cycle, 
+                algorithm = "bam",
+                data = ank_df
+)
+
+newdata <- expand.grid(  
+  speed = c(0.8, 1, 1.2, 1.4, 1.6, 1.8),
+  age = c(5, seq(10, 90, 10)),
+  sex = factor ("m"),
+  ht = 1.7,
+  strlen = 1.5,
+  study = factor("senden")
+  ) %>%
+  as.list()
+  
+
+pred_ank <- predict (mod_ank, newdata = newdata,
+                     type = "response", se.fit = TRUE, exclude = c("s(study)", "ht", "strlen", "sex"))
+
+pred_ank2 <- bind_cols(newdata) %>%
+  bind_cols(data.frame (pred_ank$fit)) %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "cycle",
+               values_to = "fit") %>%
+  mutate (cycle = str_remove(cycle, "X") %>% as.numeric)
+
+pred_ank3 <- bind_cols(newdata) %>%
+  bind_cols(data.frame (pred_ank$se.fit)) %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "cycle",
+               values_to = "se") %>%
+  mutate (cycle = str_remove(cycle, "X") %>% as.numeric,
+          fit = pred_ank2$fit,
+          lb = fit - 1.96 *se,
+          ub = fit + 1.96*se,
+          cycle = rep(25:75, nrow(.)/length (25:75)))
+
+```
+
+```{r}
+
+traj_ank <- pred_ank3 %>%
+  mutate(age = factor (age)) %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = fit, color = age), linewidth = 0.8) +
+  #geom_ribbon(aes(x = cycle, ymin = lb, ymax = ub, fill = age), alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  facet_wrap(~speed) + 
+  xlim (1,101) + 
+  ylab ("Ankle power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (fill = "Age (yr)") +
+  guides(fill = "none") + 
+  cowplot::theme_cowplot()
+
+pdf ("output/pred_traj_ankle.pdf", height = 8, width = 10)
+  traj_ank
+dev.off()
+```
+
+
+## Peak analysis
+
+```{r}
+
+#A1: a region of negative power, corresponding to eccentric plantar flexor activity at the ankle during midstance and terminal stance.
+
+a1 <-pred_ank3 %>%
+  group_by(age, speed) %>%
+  slice_min (fit)  %>%
+  mutate (speed = factor (speed))
+
+a1_plot <- ggplot (a1) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "A1 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+a1_plot
+
+# A2: a region of positive power, corresponding to the concentric burst of propulsive plantar flexor activity during preswing.
+a2 <-pred_ank3 %>%
+  group_by(age, speed) %>%
+  slice_max (fit)  %>%
+  mutate (speed = factor (speed))
+
+a2_plot <- ggplot (a2) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "A2 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+a2_plot
+
+legend <- get_legend(
+  # create some space to the left of the legend
+  a2_plot + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
+
+aplot <- cowplot::plot_grid(a1_plot + theme(legend.position="none"),
+                            a2_plot + theme(legend.position="none"), ncol = 2)
+
+
+pdf ("output/pred_peaks_ankle.pdf", height = 5, width = 12)
+  plot_grid(aplot, legend, rel_widths = c(3, .4))
+dev.off()
+```
+
+
+# Analysis of knee power
+
+```{r}
+
+# takes quite long
+mod_kne <- pffr(pow ~
+                #s(subj, bs="re") +
+                s(study, bs = "re")   +
+                s(age) +
+                s(speed) +
+                s(ht) +
+                s(strlen) +
+                c(sex),
+                yind = cycle, 
+                algorithm = "bam",
+                data = kne_df
+)
+
+pred_kne <- predict (mod_kne, newdata = newdata,
+                     type = "response", se.fit = TRUE, exclude = c("s(study)", "ht", "strlen", "sex"))
+
+pred_kne2 <- bind_cols(newdata) %>%
+  bind_cols(data.frame (pred_kne$fit)) %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "cycle",
+               values_to = "fit") %>%
+  mutate (cycle = str_remove(cycle, "X") %>% as.numeric)
+
+pred_kne3 <- bind_cols(newdata) %>%
+  bind_cols(data.frame (pred_kne$se.fit)) %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "cycle",
+               values_to = "se") %>%
+  mutate (cycle = str_remove(cycle, "X") %>% as.numeric,
+          fit = pred_kne2$fit,
+          lb = fit - 1.96 *se,
+          ub = fit + 1.96*se)
+
+```
+
+```{r}
+
+traj_kne <- pred_kne3 %>%
+  mutate(age = factor (age)) %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = fit, color = age), linewidth = 0.8) +
+  #geom_ribbon(aes(x = cycle, ymin = lb, ymax = ub, fill = age), alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  facet_wrap(~speed) + 
+  xlim (1,101) + 
+  ylab ("Knee power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (fill = "Age (yr)") +
+  guides(fill = "none") + 
+  cowplot::theme_cowplot()
+
+pdf ("output/pred_traj_knee.pdf", height = 8, width = 10)
+  traj_kne
+dev.off()
+```
+
+
+## Peak analysis
+
+```{r}
+# K1:  a region of negative power, corresponding to eccentric knee extensor activity at during loading response.
+k1 <- pred_kne3 %>%
+  filter (cycle <= 20) %>%
+  group_by(age, speed) %>%
+  slice_min (fit)  %>%
+  mutate (speed = factor (speed))
+
+k1_plot <- ggplot (k1) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "K1 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+k1_plot
+
+# K2:  a region of positive power, corresponding to concentric knee extensor activity during midstance
+k2 <- pred_kne3 %>%
+  filter (cycle > 10 & cycle < 40) %>%
+  group_by(age, speed) %>%
+  slice_max (fit)  %>%
+  mutate (speed = factor (speed))
+
+k2_plot <- ggplot (k2) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "K2 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+k2_plot
+
+a2 <-pred_ank3 %>%
+  group_by(age, speed) %>%
+  slice_max (fit)  %>%
+  mutate (speed = factor (speed))
+
+# K3:  a region of negative power, corresponding to eccentric activity in the rectus femoris during preswing
+k3 <- pred_kne3 %>%
+  filter (cycle > 50 & cycle < 70) %>%
+  group_by(age, speed) %>%
+  slice_min (fit)  %>%
+  mutate (speed = factor (speed))
+
+k3_plot <- ggplot (k3) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "K3 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+k3_plot
+
+# K4:   a region of negative power, corresponding to eccentric activity in the hamstrings during terminal swing.
+k4 <- pred_kne3 %>%
+  filter (cycle > 70) %>%
+  group_by(age, speed) %>%
+  slice_min (fit)  %>%
+  mutate (speed = factor (speed))
+
+k4_plot <- ggplot (k4) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "K4 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+k4_plot
+
+legend <- get_legend(
+  # create some space to the left of the legend
+  k1_plot + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
+
+kplot <- cowplot::plot_grid(k1_plot + theme(legend.position="none"),
+                            k2_plot + theme(legend.position="none"),
+                            k3_plot + theme(legend.position="none"),
+                            k4_plot + theme(legend.position="none"), ncol = 2)
+
+
+pdf ("output/pred_peaks_knee.pdf", height = 8, width = 15)
+  plot_grid(kplot, legend, rel_widths = c(3, .4))
+dev.off()
+
+```
+
+
+# Analysis of hip power
+
+```{r}
+
+# takes quite long
+mod_hip <- pffr(pow ~
+                #s(subj, bs="re") +
+                s(study, bs = "re")   +
+                s(age) +
+                s(speed) +
+                s(ht) +
+                s(strlen) +
+                c(sex),
+                yind = cycle, 
+                algorithm = "bam",
+                data = hip_df
+)
+
+pred_hip <- predict (mod_hip, newdata = newdata,
+                     type = "response", se.fit = TRUE, exclude = c("s(study)", "ht", "strlen", "sex"))
+
+pred_hip2 <- bind_cols(newdata) %>%
+  bind_cols(data.frame (pred_hip$fit)) %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "cycle",
+               values_to = "fit") %>%
+  mutate (cycle = str_remove(cycle, "X") %>% as.numeric)
+
+pred_hip3 <- bind_cols(newdata) %>%
+  bind_cols(data.frame (pred_hip$se.fit)) %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "cycle",
+               values_to = "se") %>%
+  mutate (cycle = str_remove(cycle, "X") %>% as.numeric,
+          fit = pred_hip2$fit,
+          lb = fit - 1.96 *se,
+          ub = fit + 1.96*se)
+
+```
+
+```{r}
+
+traj_hip <- pred_hip3 %>%
+  mutate(age = factor (age)) %>%
+  ggplot() +
+  geom_line(aes(x = cycle, y = fit, color = age), linewidth = 0.8) +
+  #geom_ribbon(aes(x = cycle, ymin = lb, ymax = ub, fill = age), alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE, option = "D")+
+  facet_wrap(~speed) + 
+  xlim (1,101) + 
+  ylab ("Hip power (W/kg)") +
+  xlab ("Stride (%)") +
+  labs (fill = "Age (yr)") +
+  guides(fill = "none") + 
+  cowplot::theme_cowplot()
+
+
+pdf ("output/pred_traj_hip.pdf", height = 8, width = 10)
+  traj_hip
+dev.off()
+```
+
+
+## Peak analysis
+
+```{r}
+# H1:  a small region of positive power, not always present, which corresponds to concentric hip extensor activity during loading response.
+
+h1 <- pred_hip3 %>%
+  filter (cycle <= 40) %>%
+  group_by(age, speed) %>%
+  slice_max (fit)  %>%
+  mutate (speed = factor (speed))
+
+h1_plot <- ggplot (h1) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "H1 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+h1_plot
+
+# H2:  a region of negative power, corresponding to eccentric hip flexor activity during midstance.
+
+h2 <-  pred_hip3 %>%
+  filter (cycle > 40 & cycle <60) %>%
+  group_by(age, speed) %>%
+  slice_min (fit)  %>%
+  mutate (speed = factor (speed))
+
+h2_plot <- ggplot (h2) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "H2 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+h2_plot
+
+# H3:  a region of positive power, corresponding to concentric activity in the hip flexors during preswing and intial swing.
+h3 <- pred_hip3 %>%
+  filter (cycle > 50 & cycle < 80) %>%
+  group_by(age, speed) %>%
+  slice_max (fit)  %>%
+  mutate (speed = factor (speed))
+
+h3_plot <- ggplot (h3) +
+  geom_point(aes (x = age, y = fit, color = speed, group = speed)) +
+  geom_line (aes (x = age, y = fit, color = speed, group = speed)) + 
+  geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
+  labs (x = "Age (yo)",
+        y = "H3 (W/kg)") +
+  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
+  cowplot::theme_cowplot()
+h3_plot
+
+legend <- get_legend(
+  # create some space to the left of the legend
+  h1_plot + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
+
+hplot <- cowplot::plot_grid(h1_plot + theme(legend.position="none"),
+                            h2_plot + theme(legend.position="none"),
+                            h3_plot + theme(legend.position="none"), ncol = 2)
+
+
+pdf ("output/pred_peaks_hip.pdf", height = 8, width = 15)
+  plot_grid(hplot, legend, rel_widths = c(3, .4))
+dev.off()
+
+```
