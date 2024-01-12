@@ -25,7 +25,7 @@ library (arsenal)
 # Import
 
 ```{r}
-df <- readRDS ("output/combined_data.RDS") %>%
+df <- readRDS ("output/combined_data.RDS") 
   #filter (study != "lencioni") 
 
 df <- df %>%

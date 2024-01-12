@@ -83,6 +83,26 @@ hip_df$pow <- as.matrix (hip_wide[,-c(1:9)])
 hip_df$cycle <- 1:101
 ```
 
+# Create new data 
+
+```{r}
+new_data <- df %>%
+  dplyr::select (age2, ht, speed, strlen) %>%
+  group_by(age2) %>%
+  summarise(ht = mean (ht, na.rm = TRUE),
+            speed = mean (speed, na.rm = TRUE),
+            strlen = mean (strlen, na.rm = TRUE)) %>%
+  mutate_if (is.numeric, round, 2) %>%
+  slice(-9) %>%
+  mutate(sex = factor ("m"),
+         study = factor("senden"),
+         age = c(10, 20, 30, 40, 50, 60, 70, 80, 5))
+
+new_data <- bind_rows(new_data, new_data, new_data)
+new_data$speed <- rep (c(0.8, 1.2, 1.4), each = 9)
+  
+```
+
 
 # Analysis of ankle power
 
@@ -94,6 +114,7 @@ mod_ank <- pffr(pow ~
                 s(study, bs = "re")   +
                 s(age) +
                 s(speed) +
+                ti (age, speed) +   
                 s(ht) +
                 s(strlen) +
                 c(sex),
@@ -102,19 +123,12 @@ mod_ank <- pffr(pow ~
                 data = ank_df
 )
 
-newdata <- expand.grid(  
-  speed = c(0.8, 1, 1.2, 1.4, 1.6, 1.8),
-  age = c(5, seq(10, 90, 10)),
-  sex = factor ("m"),
-  ht = 1.7,
-  strlen = 1.5,
-  study = factor("senden")
-  ) %>%
+newdata <- new_data %>%
   as.list()
   
 
 pred_ank <- predict (mod_ank, newdata = newdata,
-                     type = "response", se.fit = TRUE, exclude = c("s(study)", "ht", "strlen", "sex"))
+                     type = "response", se.fit = TRUE, exclude = c("s(study)", "sex"))
 
 pred_ank2 <- bind_cols(newdata) %>%
   bind_cols(data.frame (pred_ank$fit)) %>%
@@ -177,7 +191,7 @@ a1_plot <- ggplot (a1) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "A1 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 a1_plot
@@ -194,7 +208,7 @@ a2_plot <- ggplot (a2) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "A2 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 a2_plot
@@ -224,6 +238,7 @@ mod_kne <- pffr(pow ~
                 s(study, bs = "re")   +
                 s(age) +
                 s(speed) +
+                ti (age, speed) +   
                 s(ht) +
                 s(strlen) +
                 c(sex),
@@ -233,7 +248,7 @@ mod_kne <- pffr(pow ~
 )
 
 pred_kne <- predict (mod_kne, newdata = newdata,
-                     type = "response", se.fit = TRUE, exclude = c("s(study)", "ht", "strlen", "sex"))
+                     type = "response", se.fit = TRUE, exclude = c("s(study)", "sex"))
 
 pred_kne2 <- bind_cols(newdata) %>%
   bind_cols(data.frame (pred_kne$fit)) %>%
@@ -294,7 +309,7 @@ k1_plot <- ggplot (k1) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "K1 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 k1_plot
@@ -312,7 +327,7 @@ k2_plot <- ggplot (k2) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "K2 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 k2_plot
@@ -335,7 +350,7 @@ k3_plot <- ggplot (k3) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "K3 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 k3_plot
@@ -353,7 +368,7 @@ k4_plot <- ggplot (k4) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "K4 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 k4_plot
@@ -386,6 +401,7 @@ mod_hip <- pffr(pow ~
                 s(study, bs = "re")   +
                 s(age) +
                 s(speed) +
+                ti (age, speed) +   
                 s(ht) +
                 s(strlen) +
                 c(sex),
@@ -395,7 +411,7 @@ mod_hip <- pffr(pow ~
 )
 
 pred_hip <- predict (mod_hip, newdata = newdata,
-                     type = "response", se.fit = TRUE, exclude = c("s(study)", "ht", "strlen", "sex"))
+                     type = "response", se.fit = TRUE, exclude = c("s(study)", "sex"))
 
 pred_hip2 <- bind_cols(newdata) %>%
   bind_cols(data.frame (pred_hip$fit)) %>%
@@ -458,7 +474,7 @@ h1_plot <- ggplot (h1) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "H1 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 h1_plot
@@ -477,7 +493,7 @@ h2_plot <- ggplot (h2) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "H2 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 h2_plot
@@ -495,7 +511,7 @@ h3_plot <- ggplot (h3) +
   geom_errorbar(aes (x = age, ymin = lb, ymax = ub, color = speed, group = speed), width = 0) + 
   labs (x = "Age (yo)",
         y = "H3 (W/kg)") +
-  scale_x_continuous(breaks=seq(5,90, 5)) + 
+  scale_x_continuous(breaks=c(5, seq(10, 80, 10))) + 
   #scale_color_manual(values = c("black", "blue", "darkgreen")) + 
   cowplot::theme_cowplot()
 h3_plot
